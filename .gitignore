@@ -1,0 +1,14 @@
+# BMW's SDK - extract it from the head unit (kit/tools/extract_sdk.js), never commit it
+oap-sdk
+dist/
+*.pem
+*.key
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+*.mgu
+*.tgz
+*.log
+.superpowers/
