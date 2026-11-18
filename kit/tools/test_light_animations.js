@@ -261,6 +261,39 @@ test('Bilder haben eine gemeinsame Größe', () => {
     });
 });
 
+test('ohne Diagnoseverbindung wird nichts ans Auto geschickt', async () => {
+    let called = false;
+    const err = await lamps.guard({ p: null }, () => { called = true; return null; });
+    assert.strictEqual(err, 'keine Verbindung');
+    assert.strictEqual(called, false);
+    assert.strictEqual(lamps.plain(new Error('no diagnostic link')), 'keine Verbindung');
+});
+
+test('der Bericht passt in einen scanbaren Code', () => {
+    const report = app('report');
+    const body = report.text({
+        version: '0.1.2', light: 'wagen', cond: 2, speed: 0, linked: false,
+        note: 'keine Verbindung', logs: ['I Diagnose fehlt', 'W Fahrzeugzustand ungelesen'],
+    });
+    assert.ok(body.indexOf('MGU1*LA*0.1.2*WAGEN*2*0*NEIN') === 0);
+    assert.ok(!/[^0-9A-Z $%*+\-./:]/.test(body));
+    const parts = report.chunks(body);
+    const long = report.chunks(report.text({
+        version: '0.1.2', light: 'wagen', cond: 2, speed: 0, linked: true, note: 'Lichthupe',
+        logs: ['I UDS 40 10 03 ANTWORT 50 03', 'I UDS 40 2E D5 42 00 05', 'W ABGELEHNT 22', 'I DIAGNOSE VERBUNDEN', 'I PARKED SPEED 0', 'W SHORT TASU FRAME AA'],
+    }));
+    long.concat(parts).forEach((part) => {
+        assert.ok(part.length <= report.LIMIT, part);
+        assert.ok(part.indexOf('MGU1') === 0);
+    });
+    assert.ok(long.length > 1);
+    const rects = [];
+    const n = report.draw({ fillRect: (x, y, w, h, c) => rects.push(c) }, parts[0], 0, 0, 400);
+    assert.ok(n <= 57);
+    assert.strictEqual(rects[0], '#ffffff');
+    assert.ok(rects.indexOf('#000000') >= 0);
+});
+
 test('der native Renderer bekommt das Bild als x y w h r id', () => {
     const { nativeFrame } = require(path.join(ROOT, 'kit', 'runtime', 'renderd'));
     const u = new Uint32Array(9);

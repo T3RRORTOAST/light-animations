@@ -45,4 +45,20 @@ async function recover(diag, open) {
     await ask(diag, addr, 0x10, [0x01]);
 }
 
-module.exports = { flashHigh: flashHigh, flashOff: flashOff, pulseChannel: pulseChannel, recover: recover, BDC: BDC, SIDES: SIDES };
+function plain(err) {
+    const s = String(err && err.message || err || '');
+    if (s.indexOf('no diagnostic link') >= 0) return 'keine Verbindung';
+    if (s.indexOf('transport refused') >= 0) return 'Verbindung abgelehnt';
+    return s;
+}
+
+/** Run a lamp job only after Diag.init() has a proxy. Otherwise the car never hears the request. */
+function guard(diag, job) {
+    if (!diag || !diag.p) return Promise.resolve('keine Verbindung');
+    return Promise.resolve().then(job).then(function (err) { return err || null; }, plain);
+}
+
+module.exports = {
+    flashHigh: flashHigh, flashOff: flashOff, pulseChannel: pulseChannel, recover: recover,
+    guard: guard, plain: plain, BDC: BDC, SIDES: SIDES,
+};

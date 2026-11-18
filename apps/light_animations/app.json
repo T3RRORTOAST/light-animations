@@ -2,7 +2,7 @@
   "id": "light_animations",
   "title": "Light Animations",
   "description": "Lichthupe und benannte Frontleuchten für die Teststrecke. Standard ist die Simulation. Wagen schreibt die Fernlicht-Funktion des BDC und, nur im Stand und nur auf Zuruf, einen benannten FLM-Kanal.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "vendor": "custom",
   "loggingId": "OLA0",
   "iconGlyph": "LA",
