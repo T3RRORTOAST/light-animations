@@ -23,19 +23,8 @@ function readJson(file) {
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return null; }
 }
 
-function codeOf(v) {
-    if (typeof v === 'number' && isFinite(v)) return v;
-    if (Array.isArray(v)) return v.length > 5 ? v[5] : null;
-    if (v && typeof v === 'object') {
-        const keys = ['conditionVehicle', 'statusConditionVehicle', 'value', 'state', 'VehicleCondition'];
-        for (let i = 0; i < keys.length; i++) {
-            if (v[keys[i]] !== undefined && v[keys[i]] !== v) {
-                const n = codeOf(v[keys[i]]);
-                if (n !== null) return n;
-            }
-        }
-    }
-    return null;
+function seen(v) {
+    try { const s = JSON.stringify(v); return s.length > 180 ? s.slice(0, 180) : s; } catch (e) { return String(v); }
 }
 
 mgu.run({
@@ -50,6 +39,7 @@ mgu.run({
         const pick = { side: 'L', ch: 1, role: 'laser' };
         const view = { page: 0, picture: 'off', note: 'bereit', confirmed: false, running: false };
         let cond = null;
+        let heardRaw = false;
 
         function channels() {
             const list = readJson(chFile);
@@ -87,7 +77,7 @@ mgu.run({
             sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
             light: () => settings.get('light'),
             writeWhy: () => logic.writeWhy({
-                light: 'wagen', inCar: logic.personInCar(cond), resting: null,
+                light: 'wagen', absent: logic.absent(cond), resting: null,
             }),
             capMs: () => logic.capMs((+settings.get('limit') || 30) * 1000),
             gesture: () => settings.get('gesture') || 'toggle',
@@ -112,10 +102,23 @@ mgu.run({
         if (open && open.side) {
             lamps.recover(diag, open).then(() => { mark(null); log.info('offener Kanal zurück'); }).catch((e) => log.warn('Recover: ' + e));
         }
+        const noteCond = (v) => {
+            let n = null;
+            try { n = logic.codeOf(v); } catch (e) { n = null; }
+            if (n === null) {
+                if (!heardRaw) { heardRaw = true; log.warn('Fahrzeugzustand ungelesen ' + seen(v)); }
+                return;
+            }
+            if (n === cond) return;
+            cond = n;
+            log.info('Fahrzeugzustand ' + n + ' ' + (logic.stateName[n] || ''));
+        };
         if (signals.hasNative()) {
             signals.watch('de.bmw.infrastructure.VehicleCondition', '1', {
-                VehicleCondition: (v) => { const n = codeOf(v); if (n !== null) cond = n; },
-            }, log).catch((e) => log.warn('Fahrzeugzustand: ' + e));
+                VehicleCondition: noteCond,
+            }, log).then((sub) => {
+                if (sub && sub.proxy) signals.readField(sub.proxy, 'VehicleCondition', 3000).then(noteCond).catch((e) => log.warn('Zustand lesen: ' + e));
+            }).catch((e) => log.warn('Fahrzeugzustand: ' + e));
         }
 
         function busy() { return lichthupe.state.running || muster.state.running; }
@@ -142,7 +145,7 @@ mgu.run({
                 return;
             }
             const why = logic.writeWhy({
-                light: 'wagen', inCar: logic.personInCar(cond), resting: duty.why(),
+                light: 'wagen', absent: logic.absent(cond), resting: duty.why(),
             });
             if (why && why !== 'simuliert') { view.note = why; return; }
             mark(pick);
@@ -174,7 +177,8 @@ mgu.run({
             const cv = ctx.canvas(1600, 520).clear(t.bg);
             const moving = speed.moving();
             const wagen = settings.get('light') === 'wagen';
-            const mode = (moving ? 'Fahrt' : 'Stand') + ' · ' + (wagen ? 'Wagen' : 'Simuliert');
+            const heard = cond === null ? '' : ' · ' + (logic.stateName[cond] || cond);
+            const mode = (moving ? 'Fahrt' : 'Stand') + ' · ' + (wagen ? 'Wagen' : 'Simuliert') + heard;
             if (view.page === 0) drawLive(cv, t, moving);
             else if (view.page === 1) drawName(cv, t, moving);
             else drawSettings(cv, t);

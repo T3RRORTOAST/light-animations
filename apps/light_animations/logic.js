@@ -22,13 +22,58 @@ function moving(kmh) {
     return typeof kmh === 'number' && kmh > MOVE_KMH;
 }
 
+const STATE = {
+    PARKEN_BN_NIO: 1, PARKEN_BN_IO: 2, STANDFUNKTIONEN_KUNDE_NICHT_IM_FZG: 3, WOHNEN: 5,
+    PRUEFEN_ANALYSE_DIAGNOSE: 7, FAHRBEREITSCHAFT_HERSTELLEN: 8, FAHREN: 10, FAHRBEREITSCHAFT_BEENDEN: 12,
+};
+const STATE_NAME = { 1: 'Parken', 2: 'Parken', 3: 'Leer', 5: 'Wohnen', 7: 'Zündung', 8: 'Start', 10: 'Fahren', 12: 'Aus' };
+
 function personInCar(code) {
     return IN_CAR.indexOf(code) >= 0;
 }
 
+/** Parked with the bus off, or the car saying the customer is not in it. A woken parked car is not that. */
+function absent(code) {
+    return code === 1 || code === 3;
+}
+
+function codeOf(v) {
+    if (typeof Buffer !== 'undefined' && Buffer.isBuffer(v)) v = Array.prototype.slice.call(v);
+    if (typeof v === 'number' && isFinite(v)) return v >= 1 && v <= 12 ? v : null;
+    if (typeof v === 'string') {
+        if (String(parseInt(v, 10)) === v) return codeOf(parseInt(v, 10));
+        const s = v.toUpperCase();
+        if (STATE[s]) return STATE[s];
+        if (s.indexOf('WOHN') >= 0 || s.indexOf('RESID') >= 0) return 5;
+        if (s.indexOf('PRUEF') >= 0 || s.indexOf('PRÜF') >= 0) return 7;
+        if (s.indexOf('BEEND') >= 0) return 12;
+        if (s.indexOf('FAHRBEREIT') >= 0 || s.indexOf('HERSTELL') >= 0 || s.indexOf('READY') >= 0) return 8;
+        if (s.indexOf('FAHR') >= 0 || s.indexOf('DRIV') >= 0) return 10;
+        if (s.indexOf('NICHT_IM') >= 0 || s.indexOf('STAND') >= 0) return 3;
+        if (s.indexOf('NIO') >= 0) return 1;
+        if (s.indexOf('PARK') >= 0) return 2;
+        return null;
+    }
+    if (Array.isArray(v)) {
+        if (v.length > 5) { const n = codeOf(v[5]); if (n !== null) return n; }
+        for (let i = 0; i < v.length; i++) { const n = codeOf(v[i]); if (n !== null) return n; }
+        return null;
+    }
+    if (v && typeof v === 'object') {
+        const keys = ['statusConditionVehicle', 'conditionVehicle', 'value', 'state', 'VehicleCondition'];
+        for (let i = 0; i < keys.length; i++) {
+            if (v[keys[i]] !== undefined && v[keys[i]] !== v) {
+                const n = codeOf(v[keys[i]]);
+                if (n !== null) return n;
+            }
+        }
+    }
+    return null;
+}
+
 function writeWhy(o) {
     if (o.light !== 'wagen') return 'simuliert';
-    if (!o.inCar) return 'niemand im Auto';
+    if (o.absent) return 'niemand im Auto';
     if (o.resting) return o.resting;
     return null;
 }
@@ -73,5 +118,6 @@ Duty.prototype.why = function () {
 module.exports = {
     IN_CAR: IN_CAR, MAX_MS: MAX_MS, BUDGET_MS: BUDGET_MS, WINDOW_MS: WINDOW_MS, MOVE_KMH: MOVE_KMH,
     flashTicks: flashTicks, capMs: capMs, moving: moving, personInCar: personInCar,
+    absent: absent, codeOf: codeOf, stateName: STATE_NAME,
     writeWhy: writeWhy, allowedRoles: allowedRoles, Duty: Duty,
 };

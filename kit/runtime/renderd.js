@@ -14,8 +14,8 @@
  * opts.native: ask for mgu-render's own dialect (mgu-render/1, the Store's renderer). There touch
  * claims and the controller grab work on one connection, and X_STATE says when the renderer has
  * the app on screen. A renderer that does not speak it answers READY alone and the connection
- * stays in the upstream dialect. Pixel images (op 18) are upstream only: an app that draws them
- * (Doom) connects without opts.native.
+ * stays in the upstream dialect. On mgu-render/1 a picture is message 10 and op 18 is x y w h r id;
+ * nativeFrame rewrites the recorder's op, and the upload is premultiplied with a side of at most 1024.
  */
 const net = require('net');
 const fs = require('fs');
@@ -44,6 +44,62 @@ function msg(type, payload) {
     return b;
 }
 function words(u32) { return Buffer.from(u32.buffer, u32.byteOffset, u32.byteLength); }
+
+/** mgu-render/1 draws op 18 as x y w h r id. The recorder stores id ver x y w h. */
+function nativeFrame(src) {
+    const u = new Uint32Array(src.length);
+    u.set(src);
+    const OP = rec.OP;
+    let i = 0;
+    while (i < u.length) {
+        const op = u[i++];
+        if (op === OP.IMAGE) {
+            if (i + 6 > u.length) return null;
+            const id = u[i], x = u[i + 2], y = u[i + 3], w = u[i + 4], h = u[i + 5];
+            u[i] = x; u[i + 1] = y; u[i + 2] = w; u[i + 3] = h; u[i + 4] = 0; u[i + 5] = id;
+            i += 6;
+        } else if (op === OP.CLEAR || op === OP.ALPHA) i += 1;
+        else if (op === OP.NOCLIP) { /* no words */ }
+        else if (op === OP.RECT) i += 5;
+        else if (op === OP.GRAD || op === OP.CARD) {
+            const card = op === OP.CARD;
+            if (i + (card ? 6 : 5) > u.length) return null;
+            const k = u[i + (card ? 5 : 4)];
+            i += (card ? 6 : 5) + k * 2;
+        } else if (op === OP.RRECT || op === OP.LINE) i += 6;
+        else if (op === OP.RSTROKE) i += 7;
+        else if (op === OP.RAMPRECT) i += 8;
+        else if (op === OP.ARC) i += 11;
+        else if (op === OP.QUAD) i += 9;
+        else if (op === OP.TRIS) {
+            if (i >= u.length) return null;
+            const k = u[i++];
+            i += k * 9;
+        } else if (op === OP.GLYPHS) {
+            if (i + 3 > u.length) return null;
+            const k = u[i + 2];
+            i += 3 + k * 8;
+        } else if (op === OP.LAYER || op === OP.XF) i += 3;
+        else if (op === OP.CLIP) i += 4;
+        else return null;
+    }
+    return Buffer.from(u.buffer);
+}
+
+function premultiply(src) {
+    const out = Buffer.alloc(src.length);
+    for (let i = 0; i < src.length; i += 4) {
+        const a = src[i + 3];
+        if (a === 255 || a === 0) { out[i] = src[i]; out[i + 1] = src[i + 1]; out[i + 2] = src[i + 2]; out[i + 3] = a; }
+        else {
+            out[i] = (src[i] * a / 255) | 0;
+            out[i + 1] = (src[i + 1] * a / 255) | 0;
+            out[i + 2] = (src[i + 2] * a / 255) | 0;
+            out[i + 3] = a;
+        }
+    }
+    return out;
+}
 
 class RenderClient extends EventEmitter {
     constructor(appId, log, opts) {
@@ -278,14 +334,21 @@ class RenderClient extends EventEmitter {
     }
     /** upload a pixel image when this connection hasn't got its current version */
     _ensureImage(id) {
-        if (this.native) { if (!this.imgWarned) { this.imgWarned = true; this.log.warn('renderd: pixel images need the upstream dialect'); } return; }
         const im = rec.imageById.get(id);
         if (!im || !im.data) return;
         if (this.sent.image.get(id) === im.ver) return;
+        const limit = this.native ? 1024 : 4096;
+        if (!(im.w >= 1 && im.h >= 1 && im.w <= limit && im.h <= limit)) {
+            this.log.warn('renderd: image ' + id + ' is ' + im.w + 'x' + im.h);
+            return;
+        }
         const head = Buffer.alloc(12);
         head.writeUInt32LE(id, 0); head.writeUInt32LE(im.w, 4); head.writeUInt32LE(im.h, 8);
-        const px = Buffer.from(im.data.buffer, im.data.byteOffset, im.w * im.h * 4);
-        this._write(msg(M.IMAGE, Buffer.concat([head, px])));
+        const raw = Buffer.from(im.data.buffer, im.data.byteOffset, im.w * im.h * 4);
+        // native message 10 is the picture (premultiplied, side ≤ 1024). Message 9 is a touch claim there.
+        const type = this.native ? 10 : M.IMAGE;
+        const px = this.native ? premultiply(raw) : raw;
+        this._write(msg(type, Buffer.concat([head, px])));
         this.sent.image.set(id, im.ver);
     }
     _ensureLayer(id) {
@@ -307,8 +370,14 @@ class RenderClient extends EventEmitter {
         if (!this.ready || !this.placement) return false;
         this._ensureRes(r);
         this.waiting = true;
-        return this._write(msg(M.FRAME, words(r.words())));
+        let payload = words(r.words());
+        if (this.native && r.images && r.images.size) {
+            const turned = nativeFrame(r.words());
+            if (turned) payload = turned;
+            else if (!this.imgWarned) { this.imgWarned = true; this.log.warn('renderd: picture op not rewritten'); }
+        }
+        return this._write(msg(M.FRAME, payload));
     }
 }
 
-module.exports = { RenderClient, SOCKET, SOCKETS };
+module.exports = { RenderClient, SOCKET, SOCKETS, nativeFrame };

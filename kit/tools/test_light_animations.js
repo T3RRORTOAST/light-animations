@@ -43,14 +43,19 @@ test('Fahrt lässt nur Laser und Kurvenlicht', () => {
     assert.deepStrictEqual(logic.allowedRoles({ laser: false, kurve: true }, true), ['kurve']);
 });
 
-test('Schreiben nur im Wagen, mit jemandem im Auto und ohne Pause', () => {
-    assert.strictEqual(logic.writeWhy({ light: 'sim', inCar: true, resting: null }), 'simuliert');
-    assert.strictEqual(logic.writeWhy({ light: 'wagen', inCar: false, resting: null }), 'niemand im Auto');
-    assert.strictEqual(logic.writeWhy({ light: 'wagen', inCar: true, resting: 'Pause 9 s' }), 'Pause 9 s');
-    assert.strictEqual(logic.writeWhy({ light: 'wagen', inCar: true, resting: null }), null);
-    assert.strictEqual(logic.personInCar(5), true);
-    assert.strictEqual(logic.personInCar(3), false);
-    assert.strictEqual(logic.personInCar(null), false);
+test('Schreiben nur im Wagen, und nur nicht wenn das Auto leer gemeldet ist', () => {
+    assert.strictEqual(logic.writeWhy({ light: 'sim', absent: false, resting: null }), 'simuliert');
+    assert.strictEqual(logic.writeWhy({ light: 'wagen', absent: true, resting: null }), 'niemand im Auto');
+    assert.strictEqual(logic.writeWhy({ light: 'wagen', absent: false, resting: 'Pause 9 s' }), 'Pause 9 s');
+    assert.strictEqual(logic.writeWhy({ light: 'wagen', absent: false, resting: null }), null);
+    assert.strictEqual(logic.absent(null), false);
+    assert.strictEqual(logic.absent(2), false);
+    assert.strictEqual(logic.absent(5), false);
+    assert.strictEqual(logic.absent(1), true);
+    assert.strictEqual(logic.absent(3), true);
+    assert.strictEqual(logic.codeOf({ statusConditionVehicle: 'WOHNEN' }), 5);
+    assert.strictEqual(logic.codeOf({ statusConditionVehicle: 2 }), 2);
+    assert.strictEqual(logic.codeOf('PARKEN_BN_IO'), 2);
 });
 
 test('nach einem Lauf ruht das Licht mindestens so lang', () => {
@@ -254,6 +259,25 @@ test('Bilder haben eine gemeinsame Größe', () => {
         assert.strictEqual(pics[name].h, 220);
         assert.strictEqual(pics[name].data.length, 480 * 220 * 4);
     });
+});
+
+test('der native Renderer bekommt das Bild als x y w h r id', () => {
+    const { nativeFrame } = require(path.join(ROOT, 'kit', 'runtime', 'renderd'));
+    const u = new Uint32Array(9);
+    const f = new Float32Array(u.buffer);
+    u[0] = 1; u[1] = 0xff;
+    u[2] = 18; u[3] = 4; u[4] = 2; f[5] = 12; f[6] = 24; f[7] = 48; f[8] = 36;
+    const out = nativeFrame(u);
+    const o = new Uint32Array(out.buffer, out.byteOffset, out.length / 4);
+    const fo = new Float32Array(o.buffer, o.byteOffset, o.length);
+    assert.strictEqual(o[0], 1);
+    assert.strictEqual(o[2], 18);
+    assert.strictEqual(fo[3], 12);
+    assert.strictEqual(fo[4], 24);
+    assert.strictEqual(fo[5], 48);
+    assert.strictEqual(fo[6], 36);
+    assert.strictEqual(fo[7], 0);
+    assert.strictEqual(o[8], 4);
 });
 
 (async () => {
